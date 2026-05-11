@@ -14,7 +14,8 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("error: code = %d reason = %s message = %s", e.Code, e.Reason, e.Message)
+	return fmt.Sprintf("error: %s", e.Message)
+	//return fmt.Sprintf("error: code = %d reason = %s message = %s", e.Code, e.Reason, e.Message)
 }
 
 func New(code int, reason, message string) *Error {

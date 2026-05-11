@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gucooing/spoon/external"
+	"github.com/gucooing/spoon/logger"
 )
 
 type ServerOption func(*Server)
@@ -21,12 +22,14 @@ func SetAddress(address string) ServerOption {
 type Server struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	log    logger.Logger
 
 	address string
 	network string
 
-	lis  net.Listener // tcp
-	read Read         // 解析传输层数据方法
+	lis   net.Listener // tcp
+	read  Read         // 解析传输层数据方法
+	write Write        // 打包传输层数据方法
 	// 打包传输层数据方法
 	sessionManager external.SessionManager // 会话管理
 
@@ -37,10 +40,12 @@ type Server struct {
 // NewServer 新建一个对外实例
 func NewServer(opts ...ServerOption) *Server {
 	srv := &Server{
+		log:      logger.DefaultLogger(),
 		address:  "",
 		network:  "tcp",
 		lis:      nil,
 		read:     defaultRead,
+		write:    defaultWrite,
 		router:   NewRouter(),
 		handlers: nil,
 	}
@@ -80,9 +85,11 @@ func (s *Server) Start(ctx context.Context) error {
 	s.ctx = sCtx
 	s.cancel = cancel
 	s.sessionManager = NewSessionManager(s.ctx)
+	s.sessionManager.Logger(s.log)
 	if err := s.listen(); err != nil {
 		return err
 	}
+	s.log.Info("new tcp server:%s", s.lis.Addr().String())
 	for {
 		conn, err := s.lis.Accept()
 		if err != nil {
@@ -96,10 +103,13 @@ func (s *Server) Start(ctx context.Context) error {
 				return nil
 			}
 		}
+		s.log.Debug("new tcp server conn:%s", conn.RemoteAddr())
 		session := &Session{
-			conn: conn,
-			uuid: uuid.NewString(),
-			read: s.read,
+			log:   s.log,
+			conn:  conn,
+			uuid:  uuid.NewString(),
+			read:  s.read,
+			write: s.write,
 		}
 		s.sessionManager.NewSession(session)
 		go s.sessionManager.StartSession(s.ctx, session)

@@ -2,6 +2,7 @@ package external
 
 import (
 	"context"
+	"github.com/gucooing/spoon/logger"
 )
 
 type Request interface {
@@ -46,4 +47,5 @@ func (c HandlersChain) Last() HandlerFunc {
 type SessionManager interface {
 	NewSession(session Session)
 	StartSession(ctx context.Context, session Session)
+	Logger(log logger.Logger)
 }

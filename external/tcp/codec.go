@@ -1,33 +1,32 @@
 package tcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	errorss "errors"
-	"io"
-
 	"github.com/gucooing/spoon/errors"
 	"github.com/gucooing/spoon/external"
+	"io"
 )
 
 const (
 	headLenSize = 2
+	maxHeadSize = 1 << 10
+	maxBodySize = 1 << 24
 )
 
 type (
-	Read func(ctx context.Context, buf io.Reader) (external.Request, error)
+	Read  func(ctx context.Context, buf io.Reader) (external.Request, error)
+	Write func(ctx context.Context, buf io.Writer, rsp external.Response) error
 )
 
 // head 内置的tcp包头结构
 type head struct {
-	MsgID   uint32
-	BodyLen uint32
-}
-
-func (h *head) GetBody() []byte {
-	//TODO implement me
-	panic("implement me")
+	MsgID   uint32 `json:"msg_id"`
+	BodyLen uint32 `json:"body_len"`
+	Crc32   uint32 `json:"crc32"`
 }
 
 func (h *head) GetMsgID() uint32 {
@@ -53,8 +52,10 @@ func defaultRead(ctx context.Context, buf io.Reader) (external.Request, error) {
 		}
 		return nil, errors.New(errors.UnknownCode, "io.ReadFull", err.Error())
 	}
-	headLen := binary.BigEndian.Uint32(headLenBytes)
-
+	headLen := binary.BigEndian.Uint16(headLenBytes)
+	if headLen > maxHeadSize {
+		return nil, errors.New(errors.UnknownCode, "head size", "head size long")
+	}
 	headBytes := make([]byte, headLen)
 	_, err = io.ReadFull(buf, headBytes)
 	if err != nil {
@@ -72,4 +73,34 @@ func defaultRead(ctx context.Context, buf io.Reader) (external.Request, error) {
 	}
 	req.body = bodyBytes
 	return req, nil
+}
+
+func defaultWrite(ctx context.Context, buf io.Writer, rsp external.Response) error {
+	headBytes, err := json.Marshal(rsp)
+	if err != nil {
+		return errors.New(errors.UnknownCode, "Head Encoder failed", err.Error())
+	}
+	var data bytes.Buffer
+	headLen := len(headBytes)
+	if headLen > maxHeadSize {
+		return errors.New(errors.UnknownCode, "head size", "head size long")
+	}
+	if err = binary.Write(&data, binary.BigEndian, uint16(headLen)); err != nil {
+		return errors.New(errors.UnknownCode, "Head Encoder failed", err.Error())
+	}
+	if _, err = data.Write(headBytes); err != nil {
+		return errors.New(errors.UnknownCode, "Head Write failed", err.Error())
+	}
+	if _, err = data.Write(rsp.GetBody()); err != nil {
+		return errors.New(errors.UnknownCode, "Body Write failed", err.Error())
+	}
+	n, err := buf.Write(data.Bytes())
+	if err != nil {
+		return errors.New(errors.UnknownCode, "write rsp", err.Error())
+	}
+	if n != data.Len() {
+		return errors.New(errors.UnknownCode, "send rsp", "send truncated")
+	}
+
+	return nil
 }

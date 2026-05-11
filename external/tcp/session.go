@@ -3,6 +3,7 @@ package tcp
 import (
 	"context"
 	"errors"
+	"github.com/gucooing/spoon/logger"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 
 type SessionManager struct {
 	ctx context.Context
+	log logger.Logger
 
 	sync          sync.RWMutex
 	bindCnt       atomic.Uint64               // 已登录的玩家数量
@@ -29,6 +31,10 @@ func NewSessionManager(ctx context.Context) *SessionManager {
 		bindSessions:  make(map[uint64]external.Session),
 		loginSessions: make(map[string]external.Session),
 	}
+}
+
+func (sm *SessionManager) Logger(log logger.Logger) {
+	sm.log = log
 }
 
 // SessionCount 获取当前绑定的玩家会话数量
@@ -62,7 +68,7 @@ func (sm *SessionManager) StartSession(ctx context.Context, session external.Ses
 	}
 	err := session.Start(ctx)
 	if err != nil {
-
+		sm.log.Error("session %s", err.Error())
 	}
 }
 
@@ -71,8 +77,10 @@ type Session struct {
 	uuid   string
 	ctx    context.Context
 	cancel context.CancelFunc
+	log    logger.Logger
 
 	read   Read            // 接收传输层方法
+	write  Write           // 发送传输层方法
 	router external.Router // 路由
 
 	sessionID uint64 // 玩家id
@@ -96,7 +104,7 @@ func (s *Session) Start(ctx context.Context) error {
 	defer func() {
 		err := recover()
 		if err != nil {
-
+			s.log.Error("tcp server session:%s panic :%v", s.conn.RemoteAddr(), err)
 		}
 	}()
 	for {
@@ -107,11 +115,12 @@ func (s *Session) Start(ctx context.Context) error {
 			req, err := s.read(s.ctx, s.conn)
 			if err != nil {
 				if !errors.Is(err, net.ErrClosed) {
-					return nil
+					return err
 				}
-				return err
+				return nil
 			}
 			reqCtx := &Context{
+				Context:  context.WithoutCancel(s.ctx),
 				req:      req,
 				session:  s,
 				index:    0,
@@ -121,6 +130,7 @@ func (s *Session) Start(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+			s.write(reqCtx, s.conn, rsp)
 		}
 	}
 }
